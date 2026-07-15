@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"io"
 )
 
 func StartDownloader(movies <-chan models.Movie) {
@@ -43,12 +44,24 @@ func downloadMovie(movie models.Movie) {
 	}
 
 	fmt.Printf("[SUCCESS] Link found for %s -> %s\n", movie.Title, foundURL)
+
+	savePath := fmt.Sprintf("data/downloads/%s.mp4", movie.Title)
+	fmt.Printf("[DOWNLOAD] Starting download for %s...\n", movie.Title)
+
+	err = downloadFileWithResume(foundURL, savePath)
+	if err != nil {
+		fmt.Printf("[ERR] Failed to download %s: %v\n", movie.Title, err)
+		return
+	}
+
+	fmt.Printf("[COMPLETED] Successfully downloaded %s!\n", movie.Title)
+
 }
 
 
-func downloadFileWithResume (url ,savaPath string) error {
+func downloadFileWithResume(url ,savePath string) error {
 	var startBytes int64 = 0
-	fileInfo , err := os.Stat(savaPath)
+	fileInfo , err := os.Stat(savePath)
 	if err == nil {
 		startBytes = fileInfo.Size()
 		fmt.Printf("[INFO] Partial file found (%d bytes). Resuming download...\n", startBytes)
@@ -70,4 +83,21 @@ func downloadFileWithResume (url ,savaPath string) error {
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
 		return fmt.Errorf("server responded with bad status: %s", resp.Status)
 	}
+	var file *os.File
+	if startBytes > 0 && resp.StatusCode == http.StatusPartialContent {
+		file, err = os.OpenFile(savePath, os.O_WRONLY|os.O_APPEND, 0644)
+	} else {
+		file, err = os.Create(savePath)
+	}
+	if err != nil {
+		return fmt.Errorf("failed to open/create destination file: %w", err)
+	}
+	defer file.Close()
+
+	_, err = io.Copy(file, resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to write stream to file: %w", err)
+	}
+
+	return nil
 }
